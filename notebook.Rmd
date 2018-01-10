@@ -1,0 +1,371 @@
+---
+title: "Scaling EU Scepticism -- Understanding scaling as a regression task"
+author:
+- name: Andreas Niekler
+  affiliation: Universität Leipzig
+  email: aniekler@informatik.uni-leipzig.de
+- name: Ahmet Aker
+  affiliation: University of Duisburg-Essen
+  email: aker@is.inf.uni-due.de
+- name: Akitaka Matsuo 
+  affiliation: London School of Economics
+  email: a.matsuo@lse.ac.uk
+- name: Benedetta Carlotti 
+  affiliation: Scuola Normale Superiore, Firenze
+  email: benedetta.carlotti@sns.it 
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+abstract: "In this document we ..."
+header-includes:
+- \usepackage[T1]{fontenc}
+- \usepackage[utf8]{inputenc}
+- \usepackage[german]{babel}
+- \usepackage{amsmath}
+- \usepackage{graphicx} 
+geometry: margin=1in
+bibliography: references.bib
+fontfamily: mathpazo
+fontsize: 11pt
+csl: springer.csl
+output:
+  pdf_document:
+    highlight: tango
+    toc: true
+    number_sections: true
+    citation_package: natbib
+    template: svm-latex-ms.tex
+    latex_engine: xelatex
+    md_extensions: +autolink_bare_uris
+---
+
+This is our approach to the EU sceptizism scaling task. We started tackling the scaling problem with a ‘preparation phase’ where we manually inspected the data to observe their structure. After this brief inspection we realized that the majority of the available data were not dealing with issues related to the EU and the European integration project (discriminant to determine if a party is pro or against the EU) but rather with technical aspects belonging to supranational decision-making process (e.g.: discussion related to specific policy field/issue). To keep only the relevant information, we opted for a dictionary approach from which we filter out document irrelevant for the European integration. We identified EU resources (list of terms) available online discussing issues related to the European integration project, and constructed a dictionary containing only uni-grams and bi-grams. 
+
+#  Read in Data as Text (Training and Test Data)
+
+```{r,echo=FALSE,eval=TRUE,cache=TRUE}
+.libPaths(c("C:/_TOOLS/R_LIB"))
+library(data.table)
+library(dplyr)
+
+#Training Data
+myFiles <- "./data/train/1999" %>% list.files(path = ., pattern = NULL, 
+                      full.names = T, recursive = T,
+                      include.dirs = F)
+
+myFiles <- "./data/validation/2010" %>% list.files(path = ., pattern = NULL, 
+                      full.names = T, recursive = T,
+                      include.dirs = F) %>% c(.,myFiles)
+
+
+text_data <- data.table(text=character(),source=character())
+
+for (filename in myFiles) {
+  cat("Extracting from ", filename, "...\n")
+  tmp <- file(paste0(filename),encoding = "UTF-8") %>% readLines
+  text_data <- rbind(text_data,data.table(text=tmp,source=rep(filename,length(tmp))))
+}
+
+#This is questionable - just an arbitrary guess
+text_data$is_important <- nchar(text_data$text) > 50
+
+tmp <- stringi::stri_trim(str = text_data$text)
+text_data$text <- tmp
+
+```
+
+# Process Data to data object and filter
+
+The entries of the dictionary are used as a filtering process. Each speech is regarded as one instance, which consists of multiple sentences.  Our filtering works at the sentence level. We used the dictionary entries to filter out any sentence within each speech that does not share any entry in the dictionary. 
+
+```{r,echo=FALSE,eval=TRUE,cache=TRUE}
+library(dplyr)
+library(magrittr)
+library(quanteda)
+library(stringi)
+library(Matrix)
+library(SparseM)
+
+text_data %<>% filter(!duplicated(text))
+
+data_corpus_ep_speech <-
+  text_data %>% 
+  group_by(source) %>%
+  mutate(doc_id = paste(source, row_number(), sep = "_")) %>%
+  filter(is_important == TRUE) %$%
+  corpus(text, docnames = doc_id) %>% corpus() %>%
+  corpus_reshape(to = 'sentences')
+
+dic_2 <- read.delim("./data/euDic2_v2.csv", header = F, sep = "\t", as.is = T,encoding = "UTF-8")[, 1]   
+dic_1 <- read.delim("./data/euDic1.csv", header = F, sep = "\t", as.is = T,encoding = "UTF-8")[, 1]
+dic_3<- read.csv("./data/dictio_EU/dictio_1_v2.csv",encoding = "UTF-8")[, 1]
+dic_4<- read.delim("./data/dictio_EU/dictio_2.csv", header = F, sep = "\t", as.is = T,encoding = "UTF-8")[ ,1]
+
+dic_entry  <- c(dic_2, dic_1, dic_3, dic_4) %>% stri_trim_both()
+dic_nwords<- stri_split_boundaries(dic_entry) %>% sapply(length)
+dic_entry <- dic_entry[dic_nwords < 3] %>% 
+  stri_trans_tolower()
+dic_nwords2 <- stri_split_boundaries(dic_entry) %>% sapply(length)
+dic_entry[dic_nwords2 == 2]
+
+data_tokens_sentences <- data_corpus_ep_speech %>%
+  tokens() %>% tokens_tolower()
+data_tokens_sentences2 <- 
+  tokens_compound(data_tokens_sentences, pattern = dic_entry[dic_nwords2 == 2])
+data_tokens_sentences2 <- tokens_select(data_tokens_sentences2, 
+                                        selection = "keep", valuetype = "fixed",
+                                        pattern = dic_entry)
+data_dfm_dic_matched <- dfm(data_tokens_sentences2)
+#(rowSums(data_dfm_dic_matched) > 0) %>% table
+
+```
+
+# Prune
+
+Using the trimmed instances (with sentences containing related to our problem) we perform standard bag-of-words feature extraction (with uni-grams and bi-grams) along with feature selection. For feature selection we disregarded any word that occurred in more than 75% of the instances as well as in only 1% of the instances. Furthermore we used chi-square test to remove further insignificant words leading us to a feature vector containing 1500 words. 
+
+```{r,echo=FALSE,eval=TRUE,cache=TRUE}
+
+selected_sentences <- rowSums(data_dfm_dic_matched) > 0
+
+#Select more context than a sentence
+for(i in 1:(length(selected_sentences)-2))
+{
+  if(selected_sentences[i] && (i > 2))
+  {
+    selected_sentences[(i-2):(i+2)] <- T
+  }
+} 
+
+
+data_dfm_entries <- #data_df_sentences_sub %$%
+  #corpus(text, docnames = paste(doc_id, sentence_id, sep = "_")) %>%
+  data_corpus_ep_speech %>%
+  #THIS CAN BE DONE RIGHT BEFORE THE CLASSIFICATION BY FILTERING #>>
+  #corpus_subset(data_corpus_ep_speech, rowSums(data_dfm_dic_matched) > 0) %>%
+  corpus_reshape(to = "documents") %>%
+  tokens(remove_punct = TRUE) %>% tokens_tolower() %>% 
+  tokens_remove(pattern = stopwords()) %>%
+  tokens_ngrams(1:2) %>% dfm()  
+
+data_dfm_entries_dict <- #data_df_sentences_sub %$%
+  #corpus(text, docnames = paste(doc_id, sentence_id, sep = "_")) %>%
+  #data_corpus_ep_speech %>%
+  #THIS CAN BE DONE RIGHT BEFORE THE CLASSIFICATION BY FILTERING #>>
+  corpus_subset(data_corpus_ep_speech, selected_sentences) %>%
+  corpus_reshape(to = "documents") %>%
+  tokens(remove_punct = TRUE) %>% tokens_tolower() %>% 
+  tokens_remove(pattern = stopwords()) %>%
+  tokens_ngrams(1:2) %>% dfm() 
+
+#data_dfm_with_dic_entries %>% dim
+#data_dfm_with_dic_entries %>% colSums() %>% table()
+
+#Remove Dictionary from Context
+data_dfm_entries_dict <- 
+  dfm_remove(data_dfm_entries_dict,
+             pattern = dic_entry %>% stri_replace_all_fixed(" ", "_"))
+
+data_dfm_entries_sub <- 
+  data_dfm_entries %>% dfm_trim(min_docfreq = nrow(.) *0.01,
+                                               max_docfreq = nrow(.) *0.75) %>%
+  #data_dfm_with_dic_entries_nodic[, colSums(data_dfm_with_dic_entries_nodic) >= 10] %>%
+  #sort(colSums(data_dfm_with_dic_entries_nodic), decreasing = T)[1000]] %>% 
+  dfm_select(pattern = "[a-z]", valuetype = "regex", selection = 'keep')
+
+data_dfm_entries_dict_sub <- 
+  data_dfm_entries_dict %>% dfm_trim(min_docfreq = nrow(.) *0.01,
+                                               max_docfreq = nrow(.) *0.75) %>%
+  #data_dfm_with_dic_entries_nodic[, colSums(data_dfm_with_dic_entries_nodic) >= 10] %>%
+  #sort(colSums(data_dfm_with_dic_entries_nodic), decreasing = T)[1000]] %>% 
+  dfm_select(pattern = "[a-z]", valuetype = "regex", selection = 'keep')
+
+colnames(data_dfm_entries_sub) <- colnames(data_dfm_entries_sub) %>% stri_replace_all_regex("[^_a-z]", "") 
+colnames(data_dfm_entries_dict_sub) <- colnames(data_dfm_entries_dict_sub) %>% stri_replace_all_regex("[^_a-z]", "") 
+
+data_dfm_entries_sub <- dfm_compress(data_dfm_entries_sub, "features")
+data_dfm_entries_dict_sub <- dfm_compress(data_dfm_entries_dict_sub, "features")
+
+data_dfm_entries_sub <- 
+  data_dfm_entries_sub[rowSums(data_dfm_entries_sub) >=10, ]
+
+data_dfm_entries_dict_sub <- 
+  data_dfm_entries_dict_sub[rowSums(data_dfm_entries_sub) >=10, ]
+
+metadata <- data.frame(source = rownames(data_dfm_entries_sub) %>% stri_extract_first_regex(".+?txt"))
+metadata_dict <- data.frame(source = rownames(data_dfm_entries_dict_sub) %>% stri_extract_first_regex(".+?txt"))
+
+data_dfm_entries_sub <- dfm_weight(data_dfm_entries_sub, "tfidf")
+data_dfm_entries_dict_sub <- dfm_weight(data_dfm_entries_dict_sub, "tfidf")
+#data_df_dfm <- convert(data_dfm_entries_sub, to = "data.frame")
+#names(data_df_dfm) <- names(data_df_dfm) #paste0("V", 1:ncol(data_df_dfm))
+#data_df_dfm <- data_df_dfm[, !duplicated(names(data_df_dfm))]
+metadata %<>% mutate(source = rownames(data_dfm_entries_sub) %>% stri_extract_first_regex(".+?txt"))
+metadata_dict %<>% mutate(source = rownames(data_dfm_entries_dict_sub) %>% stri_extract_first_regex(".+?txt"))
+
+```
+
+
+# Regression
+
+For each instance we extracted a feature vector containing those significant 1500 terms. The feature values are simple word counts. We used linear SVM regression model, where the outcome is the true score, with parameter tuning. The model is capable to score each instance between 1 (pro EU) and 0 (non pro EU). As a number of speech instances are coming from the affiliates of one party, there are a number of predictive scores for each party. We use the median as the final predictive score. For comparison purposes we repeated our experiments without the filtering process, i.e. feature vectors were extracted without removing any sentence. However, we applied the same feature selection as performed with the dictionary filtering case. We refer to this last experiment as „without dictionary“ and the former experiment as „with dictionary“. Our results show, against our intuition, that the inclusion of all datasets and sentences performs better on the task than filtering the sentences. This needs further investigation in order to improve and adopt the dictionary to the task.
+
+```{r,echo=T,eval=TRUE,cache=TRUE}
+
+#Conversion to the right matrix format for LiblibneaR
+Matrix_to_SparseM <- function(X) {
+  X.csc <- new("matrix.csc", ra = X@x,
+               ja = X@i + 1L,
+               ia = X@p + 1L,
+               dimension = X@Dim)
+  return(as.matrix.csr(X.csc))
+}
+
+data_gold_train <- read.delim("./data/train/gs-eu-integration.txt", header = F, 
+                        sep = " ", as.is = T) %>% rename(source = V1, score = V2)
+data_gold_train$set <- rep("train",nrow(data_gold_train))
+data_gold_train$source <- paste("1999",data_gold_train$source,sep="/")
+#Other dataset here
+data_gold_test <- read.delim("./data/validation/eu-integration.txt", header = F, 
+                        sep = " ", as.is = T) %>% rename(source = V1, score = V2) #%>% c(.,data_gold)
+data_gold_test$set <- rep("test",nrow(data_gold_test))
+data_gold_test$source <- paste("2010",data_gold_test$source,sep="/")
+
+data_gold <- rbind(data_gold_train,data_gold_test)
+data_gold <- unique(data_gold)
+
+
+source_split <- stri_split(metadata$source,regex = "/") %>% sapply(., tail, 2) %>% t
+source_split <- paste(source_split[,1],source_split[,2],sep="/")
+
+source_split_dict <- stri_split(metadata_dict$source,regex = "/") %>% sapply(., tail, 2) %>% t
+source_split_dict <- paste(source_split_dict[,1],source_split_dict[,2],sep="/")
+
+metadata$source <- source_split
+metadata_dict$source <- source_split_dict
+
+metadata <- metadata %>% left_join(., data_gold,copy = F)
+metadata_dict <- metadata_dict %>% left_join(., data_gold,copy = F)
+
+set.seed(20171206)
+
+#was 0.01 at Vigoni
+metadata %<>% mutate(score2 = score + rnorm(nrow(metadata), sd = 0.001))
+metadata_dict %<>% mutate(score2 = score + rnorm(nrow(metadata_dict), sd = 0.001))
+
+metadata %<>% mutate(score_disc = cut(score, seq(0, 1, by = .2)) %>% 
+                          as.integer())
+metadata_dict %<>% mutate(score_disc = cut(score, seq(0, 1, by = .2)) %>% 
+                          as.integer())
+
+train_labels <- metadata$score_disc[metadata$set=="train"]
+test_labels <- metadata$score_disc[metadata$set=="test"]
+
+train_labels_dict <- metadata_dict$score_disc[metadata_dict$set=="train"]
+test_labels_dict <- metadata_dict$score_disc[metadata_dict$set=="test"]
+
+dtm_final <-convert(data_dfm_entries_sub, to = "tm")
+dtm_final_dict <-convert(data_dfm_entries_dict_sub, to = "tm")
+
+dtm_final <-  sparseMatrix(i=dtm_final$i, 
+                               j=dtm_final$j, 
+                               x=dtm_final$v,
+                               dims=c(dtm_final$nrow, dtm_final$ncol),
+                               dimnames = list(rownames(data_dfm_entries_sub),colnames(data_dfm_entries_sub)))
+
+dtm_final_dict <-  sparseMatrix(i=dtm_final_dict$i, 
+                               j=dtm_final_dict$j, 
+                               x=dtm_final_dict$v,
+                               dims=c(dtm_final_dict$nrow, dtm_final_dict$ncol),
+                               dimnames = list(rownames(data_dfm_entries_dict_sub),colnames(data_dfm_entries_dict_sub)))
+
+dtm_final_train <- dtm_final[metadata$set=="train",]
+dtm_final_train <- dtm_final_train[,which(colSums(dtm_final_train) > 0)]
+
+dtm_final_test <- dtm_final[metadata$set=="test",colnames(dtm_final_train)]
+
+dtm_final_train_dict <- dtm_final_dict[metadata_dict$set=="train",]
+dtm_final_train_dict <- dtm_final_train_dict[,which(colSums(dtm_final_train_dict) > 0)]
+
+dtm_final_test_dict <- dtm_final_dict[metadata_dict$set=="test",colnames(dtm_final_train_dict)]
+
+#dfm_train <- data_dfm_entries_sub[metadata$set=="train",] %>% dfm_select(which(colSums(data_dfm_entries_sub[metadata$set=="train",]) > 0))
+#dfm_test <- raw[merged_data$set.y=="test",colSums(raw[merged_data$set.y=="test",]) > 0] 
+
+chisq.out <- apply(dtm_final_train, 2, function(x) chisq.test(x, train_labels)$statistic)
+chisq.out_dict <- apply(dtm_final_train_dict, 2, function(x) chisq.test(x, train_labels_dict)$statistic)
+
+table(chisq.out > 6)[1:100]
+table(chisq.out_dict > 6)[1:100]
+
+hcs <- c(0.01,0.1,0.3,0.7,1,3,7,10)
+
+source_train <- metadata$source[metadata$set=="train"]
+source_test <- metadata$source[metadata$set=="test"]
+
+#NO DICT
+dtm_train_tmp <- Matrix_to_SparseM(dtm_final_train)
+dtm_test_tmp <- Matrix_to_SparseM(dtm_final_test)
+
+y_train <- metadata$score2[metadata$set=="train"]
+y_test <- metadata$score2[metadata$set=="test"]
+
+library(LiblineaR)
+
+linMap <- function(x, from, to)
+  (x - min(x)) / max(x - min(x)) * (to - from) + from
+
+invisible(lapply(hcs,function(x){
+  #Type 11,12,13
+  model <- LiblineaR(dtm_train_tmp, y_train, type = 12, cost =x,verbose = F,svr_eps = 0.1)
+  
+  y_hat_tmp <- predict(model,dtm_test_tmp,proba = F)
+  
+  
+  data.frame(y_hat = linMap(y_hat_tmp$predictions,0,1), source = source_test, y = linMap(y_test,0,1)) %>% 
+    group_by(source) %>% 
+    summarize(y_hat = mean(y_hat, trim = .2), 
+           y = mean(y)) %$%
+    cor(y_hat, y) -> res
+  
+  data.frame(y_hat = linMap(y_hat_tmp$predictions,0,1), source = source_test, y = linMap(y_test,0,1)) %>% 
+    group_by(source) %>% 
+    summarize(y_hat = mean(y_hat, trim = .2), 
+           y = mean(y)) %$%
+    cor(y_hat, y,method="spearman") -> res2
+  
+  cat(paste0("HC: ", x, " Pearson: ", res,"; Spearman: ",res2,"\n"))
+}))
+
+#Dict
+source_train_dict <- metadata_dict$source[metadata_dict$set=="train"]
+source_test_dict <- metadata_dict$source[metadata_dict$set=="test"]
+
+dtm_train_tmp_dict <- Matrix_to_SparseM(dtm_final_train_dict)
+dtm_test_tmp_dict <- Matrix_to_SparseM(dtm_final_test_dict)
+
+y_train_dict <- metadata_dict$score2[metadata_dict$set=="train"]
+y_test_dict <- metadata_dict$score2[metadata_dict$set=="test"]
+
+invisible(lapply(hcs,function(x){
+  #Type 11,12,13
+  model <- LiblineaR(dtm_train_tmp_dict, y_train_dict, type = 12, cost =x,verbose = F,svr_eps = 0.1)
+  
+  y_hat_tmp <- predict(model,dtm_test_tmp_dict,proba = F)
+  
+  
+  data.frame(y_hat = linMap(y_hat_tmp$predictions,0,1), source = source_test_dict, y = linMap(y_test_dict,0,1)) %>% 
+    group_by(source) %>% 
+    summarize(y_hat = mean(y_hat, trim = .2), 
+           y = mean(y)) %$%
+    cor(y_hat, y) -> res
+  
+  data.frame(y_hat = linMap(y_hat_tmp$predictions,0,1), source = source_test_dict, y = linMap(y_test_dict,0,1)) %>% 
+    group_by(source) %>% 
+    summarize(y_hat = mean(y_hat, trim = .2), 
+           y = mean(y)) %$%
+    cor(y_hat, y,method="spearman") -> res2
+  
+  cat(paste0("HC: ", x, " Pearson: ", res,"; Spearman: ",res2,"\n"))
+}))
+
+```
+
