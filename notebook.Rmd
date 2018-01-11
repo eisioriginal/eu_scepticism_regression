@@ -41,7 +41,7 @@ This is our approach to the EU sceptizism scaling task. We started tackling the 
 
 #  Read in Data as Text (Training and Test Data)
 
-```{r,echo=FALSE,eval=TRUE,cache=TRUE}
+```{r,echo=TRUE,eval=TRUE,cache=TRUE,warning=FALSE}
 .libPaths(c("C:/_TOOLS/R_LIB"))
 library(data.table)
 library(dplyr)
@@ -58,11 +58,11 @@ myFiles <- "./data/validation/2010" %>% list.files(path = ., pattern = NULL,
 
 text_data <- data.table(text=character(),source=character())
 
-for (filename in myFiles) {
+invisible(for (filename in myFiles) {
   cat("Extracting from ", filename, "...\n")
   tmp <- file(paste0(filename),encoding = "UTF-8") %>% readLines
   text_data <- rbind(text_data,data.table(text=tmp,source=rep(filename,length(tmp))))
-}
+})
 
 #This is questionable - just an arbitrary guess
 text_data$is_important <- nchar(text_data$text) > 50
@@ -76,7 +76,7 @@ text_data$text <- tmp
 
 The entries of the dictionary are used as a filtering process. Each speech is regarded as one instance, which consists of multiple sentences.  Our filtering works at the sentence level. We used the dictionary entries to filter out any sentence within each speech that does not share any entry in the dictionary. 
 
-```{r,echo=FALSE,eval=TRUE,cache=TRUE}
+```{r,echo=TRUE,eval=TRUE,cache=TRUE,warning=FALSE}
 library(dplyr)
 library(magrittr)
 library(quanteda)
@@ -104,7 +104,7 @@ dic_nwords<- stri_split_boundaries(dic_entry) %>% sapply(length)
 dic_entry <- dic_entry[dic_nwords < 3] %>% 
   stri_trans_tolower()
 dic_nwords2 <- stri_split_boundaries(dic_entry) %>% sapply(length)
-dic_entry[dic_nwords2 == 2]
+#dic_entry[dic_nwords2 == 2]
 
 data_tokens_sentences <- data_corpus_ep_speech %>%
   tokens() %>% tokens_tolower()
@@ -122,7 +122,7 @@ data_dfm_dic_matched <- dfm(data_tokens_sentences2)
 
 Using the trimmed instances (with sentences containing related to our problem) we perform standard bag-of-words feature extraction (with uni-grams and bi-grams) along with feature selection. For feature selection we disregarded any word that occurred in more than 75% of the instances as well as in only 1% of the instances. Furthermore we used chi-square test to remove further insignificant words leading us to a feature vector containing 1500 words. 
 
-```{r,echo=FALSE,eval=TRUE,cache=TRUE}
+```{r,echo=TRUE,eval=TRUE,cache=TRUE,warning=FALSE}
 
 selected_sentences <- rowSums(data_dfm_dic_matched) > 0
 
@@ -219,6 +219,25 @@ Matrix_to_SparseM <- function(X) {
   return(as.matrix.csr(X.csc))
 }
 
+pairwise_accuracy <- function(golds, preds){
+  count_good <- 0.0
+	count_all <- 0.0
+	
+	for(i in 1:(length(golds)-1)){
+	  for(j in (i+1):(length(golds)))
+	  {
+	    count_all <-  count_all + 1.0
+	    diff_gold  <-  golds[i] - golds[j]
+			diff_pred  <-  preds[i] - preds[j]
+			if ((diff_gold * diff_pred) >= 0)
+				count_good  <- count_good + 1.0
+	  }
+	}
+	
+	return(count_good / count_all)
+
+}
+	
 data_gold_train <- read.delim("./data/train/gs-eu-integration.txt", header = F, 
                         sep = " ", as.is = T) %>% rename(source = V1, score = V2)
 data_gold_train$set <- rep("train",nrow(data_gold_train))
@@ -290,8 +309,8 @@ dtm_final_test_dict <- dtm_final_dict[metadata_dict$set=="test",colnames(dtm_fin
 #dfm_train <- data_dfm_entries_sub[metadata$set=="train",] %>% dfm_select(which(colSums(data_dfm_entries_sub[metadata$set=="train",]) > 0))
 #dfm_test <- raw[merged_data$set.y=="test",colSums(raw[merged_data$set.y=="test",]) > 0] 
 
-chisq.out <- apply(dtm_final_train, 2, function(x) chisq.test(x, train_labels)$statistic)
-chisq.out_dict <- apply(dtm_final_train_dict, 2, function(x) chisq.test(x, train_labels_dict)$statistic)
+invisible(chisq.out <- apply(dtm_final_train, 2, function(x) chisq.test(x, train_labels)$statistic))
+invisible(chisq.out_dict <- apply(dtm_final_train_dict, 2, function(x) chisq.test(x, train_labels_dict)$statistic))
 
 table(chisq.out > 6)[1:100]
 table(chisq.out_dict > 6)[1:100]
@@ -364,7 +383,13 @@ invisible(lapply(hcs,function(x){
            y = mean(y)) %$%
     cor(y_hat, y,method="spearman") -> res2
   
-  cat(paste0("HC: ", x, " Pearson: ", res,"; Spearman: ",res2,"\n"))
+  data.frame(y_hat = linMap(y_hat_tmp$predictions,0,1), source = source_test_dict, y = linMap(y_test_dict,0,1)) %>% 
+    group_by(source) %>% 
+    summarize(y_hat = mean(y_hat, trim = .2), 
+           y = mean(y)) %$%
+    pairwise_accuracy(y_hat, y) -> res3
+  
+  cat(paste0("HC: ", x, " Pearson: ", res,"; Spearman: ",res2,"; PA: ",res3,"\n"))
 }))
 
 ```
