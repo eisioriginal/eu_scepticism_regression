@@ -110,7 +110,7 @@ data_tokens_sentences <- data_corpus_ep_speech %>%
   tokens() %>% tokens_tolower()
 
 data_tokens_sentences2 <- 
-  tokens_compound(data_tokens_sentences, pattern = dic_entry[dic_nwords2 == 2])
+  tokens_compound(data_tokens_sentences, pattern = dic_entry[dic_nwords2 == 2], concatenator = " ")
 
 data_tokens_sentences2 <- tokens_select(data_tokens_sentences2, 
                                         selection = "keep", valuetype = "fixed",
@@ -129,11 +129,11 @@ Using the trimmed instances (with sentences containing related to our problem) w
 selected_sentences <- rowSums(data_dfm_dic_matched) > 0
 
 #Select more context than a sentence
-for(i in 1:(length(selected_sentences)-2))
+for(i in 1:(length(selected_sentences)-1))
 {
-  if(selected_sentences[i] && (i > 2))
+  if(selected_sentences[i] && (i > 1))
   {
-    selected_sentences[(i-2):(i+2)] <- T
+    selected_sentences[(i-1):(i+1)] <- T
   }
 } 
 lemmaData <- read.csv2("resources/baseform_en.tsv", sep="\t", header=FALSE, encoding = "UTF-8", stringsAsFactors = F)
@@ -156,7 +156,7 @@ data_dfm_entries_dict <- #data_df_sentences_sub %$%
   corpus_reshape(to = "documents") %>%
   tokens(remove_punct = TRUE) %>% tokens_tolower() %>% 
   tokens_replace(., lemmaData$V1, lemmaData$V2) %>%
-  tokens_ngrams(1:2) %>% tokens_remove(pattern = stopwords())  %>% dfm()
+  tokens_ngrams(1:2) %>% tokens_remove(pattern = stopwords()) %>% dfm()
 
 #data_dfm_with_dic_entries %>% dim
 #data_dfm_with_dic_entries %>% colSums() %>% table()
@@ -190,7 +190,7 @@ data_dfm_entries_sub <-
   data_dfm_entries_sub[rowSums(data_dfm_entries_sub) >=10, ]
 
 data_dfm_entries_dict_sub <- 
-  data_dfm_entries_dict_sub[rowSums(data_dfm_entries_sub) >=10, ]
+  data_dfm_entries_dict_sub[rowSums(data_dfm_entries_dict_sub) >=10, ]
 
 metadata <- data.frame(source = rownames(data_dfm_entries_sub) %>% stri_extract_first_regex(".+?txt"))
 metadata_dict <- data.frame(source = rownames(data_dfm_entries_dict_sub) %>% stri_extract_first_regex(".+?txt"))
