@@ -154,8 +154,9 @@ data_dfm_entries_dict <- #data_df_sentences_sub %$%
   corpus_subset(data_corpus_ep_speech, selected_sentences) %>%
   corpus_reshape(to = "documents") %>%
   tokens(remove_punct = TRUE) %>% tokens_tolower() %>% 
-  tokens_replace(., lemmaData$V1, lemmaData$V2) %>%
-  tokens_ngrams(1:2) %>% tokens_remove(pattern = stopwords())  %>% dfm()
+  {if(exists("lemmaData")){tokens_replace(., lemmaData$V1, lemmaData$V2)} else 
+    tokens_replace(., lexicon::hash_lemmas$token, lexicon::hash_lemmas$lemma)} %>% 
+  tokens_ngrams(1:2) %>% tokens_remove(pattern = stopwords()) %>% dfm()
 
 #data_dfm_with_dic_entries %>% dim
 #data_dfm_with_dic_entries %>% colSums() %>% table()
