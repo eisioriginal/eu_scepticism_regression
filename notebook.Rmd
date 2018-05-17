@@ -42,7 +42,7 @@ This is our approach to the EU sceptizism scaling task. We started tackling the 
 #  Read in Data as Text (Training and Test Data)
 
 ```{r,echo=TRUE,eval=TRUE,cache=TRUE,warning=FALSE}
-.libPaths(c("C:/_TOOLS/R_LIB"))
+if(identical(.Platform$OS.type, "windows")) .libPaths(c("C:/_TOOLS/R_LIB"))
 library(data.table)
 library(dplyr)
 
@@ -134,7 +134,7 @@ for(i in 1:(length(selected_sentences)-2))
     selected_sentences[(i-2):(i+2)] <- T
   }
 } 
-lemmaData <- read.csv2("resources/baseform_en.tsv", sep="\t", header=FALSE, encoding = "UTF-8", stringsAsFactors = F)
+if(file.exists("resources/baseform_en.tsv")) lemmaData <- read.csv2("resources/baseform_en.tsv", sep="\t", header=FALSE, encoding = "UTF-8", stringsAsFactors = F)
 
 data_dfm_entries <- #data_df_sentences_sub %$%
   #corpus(text, docnames = paste(doc_id, sentence_id, sep = "_")) %>%
@@ -142,9 +142,10 @@ data_dfm_entries <- #data_df_sentences_sub %$%
   #THIS CAN BE DONE RIGHT BEFORE THE CLASSIFICATION BY FILTERING #>>
   #corpus_subset(data_corpus_ep_speech, rowSums(data_dfm_dic_matched) > 0) %>%
   corpus_reshape(to = "documents") %>%
-  tokens(remove_punct = TRUE) %>% tokens_tolower() %>% 
-  tokens_replace(., lemmaData$V1, lemmaData$V2) %>%
-  tokens_ngrams(1:2) %>% tokens_remove(pattern = stopwords()) %>% dfm()
+  tokens(remove_punct = TRUE) %>% #tokens_tolower() %>% 
+  {if(exists("lemmaData")){tokens_replace(., lemmaData$V1, lemmaData$V2)} else 
+    tokens_replace(., lexicon::hash_lemmas$token, lexicon::hash_lemmas$lemma)} %>% 
+    tokens_ngrams(1:2) %>% tokens_remove(pattern = stopwords()) %>% dfm()
 
 data_dfm_entries_dict <- #data_df_sentences_sub %$%
   #corpus(text, docnames = paste(doc_id, sentence_id, sep = "_")) %>%
